@@ -70,6 +70,62 @@ function injectLaunchButton() {
   document.body.appendChild(button);
 }
 
+import { UnsubscribeQueue } from '@/lib/unsubscribe';
+import type { UnsubscribeBatchPayload, ExtensionMessage, UnsubscribeProgressPayload } from '@/types';
+
+// Listen for messages from the background service worker
+chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendResponse) => {
+  if (message.type === 'UNSUBSCRIBE_BATCH') {
+    handleUnsubscribeBatch(message.payload as UnsubscribeBatchPayload);
+    sendResponse({ success: true });
+  }
+});
+
+/**
+ * Handle batch unsubscribe command from service worker.
+ */
+async function handleUnsubscribeBatch(payload: UnsubscribeBatchPayload) {
+  console.log('[SubZero] Starting batch unsubscribe for', payload.channelIds.length, 'channels');
+
+  const queue = new UnsubscribeQueue({
+    onProgress: (completed, total, currentChannelId) => {
+      const progressPayload: UnsubscribeProgressPayload = {
+        processed: completed,
+        total,
+        currentChannelId,
+        complete: false,
+      };
+
+      chrome.runtime.sendMessage({
+        type: 'UNSUBSCRIBE_PROGRESS',
+        payload: progressPayload,
+      });
+    },
+    onComplete: (results) => {
+      console.log('[SubZero] Batch unsubscribe complete', results);
+
+      // Calculate overall stats
+      const failed = results.filter(r => !r.success).length;
+
+      const progressPayload: UnsubscribeProgressPayload = {
+        processed: results.length,
+        total: results.length,
+        currentChannelId: '',
+        complete: true,
+        lastResult: failed > 0 ? { success: false, error: `${failed} failed` } : { success: true }
+      };
+
+      chrome.runtime.sendMessage({
+        type: 'UNSUBSCRIBE_PROGRESS',
+        payload: progressPayload,
+      });
+    }
+  });
+
+  queue.add(payload.channelIds);
+  await queue.start();
+}
+
 // Initialize
 injectMainWorldScript();
 injectLaunchButton();

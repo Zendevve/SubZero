@@ -1,6 +1,8 @@
+import { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import type { Subscription } from '@/types';
+import type { Subscription, ExtensionMessage, UnsubscribeProgressPayload } from '@/types';
 import SubscriptionGrid from './components/SubscriptionGrid';
+import { UnsubscribeProgressModal } from './components/UnsubscribeProgressModal';
 
 async function fetchSubscriptions(): Promise<Subscription[]> {
   return new Promise((resolve, reject) => {
@@ -15,10 +17,22 @@ async function fetchSubscriptions(): Promise<Subscription[]> {
 }
 
 function App() {
+  const [progress, setProgress] = useState<UnsubscribeProgressPayload | null>(null);
   const { data: subscriptions, isLoading, error, refetch } = useQuery({
     queryKey: ['subscriptions'],
     queryFn: fetchSubscriptions,
   });
+
+  useEffect(() => {
+    // Listen for progress updates
+    const listener = (message: ExtensionMessage) => {
+      if (message.type === 'UNSUBSCRIBE_PROGRESS') {
+        setProgress(message.payload as UnsubscribeProgressPayload);
+      }
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
+  }, []);
 
   const handleScanInactivity = () => {
     chrome.runtime.sendMessage({ type: 'SCAN_INACTIVITY' });
@@ -86,10 +100,41 @@ function App() {
           onUnsubscribe={(channelIds: string[]) => {
             const count = channelIds.length;
             if (confirm(`Are you sure you want to unsubscribe from ${count} channel(s)? This cannot be undone.`)) {
+              // Initialize progress state
+              setProgress({
+                processed: 0,
+                total: count,
+                currentChannelId: '',
+                complete: false,
+              });
+
               chrome.runtime.sendMessage({ type: 'UNSUBSCRIBE_BATCH', payload: { channelIds } });
-              // TODO: Show progress modal
-              alert(`Started unsubscribing from ${count} channels. This will take approximately ${Math.ceil(count * 2.5 / 60)} minutes.`);
             }
+          }}
+          onToggleSafelist={(channelId: string, isSafeListed: boolean) => {
+            // Optimistic update (or just fast refetch)
+            chrome.runtime.sendMessage({
+              type: 'TOGGLE_SAFELIST',
+              payload: { channelId, isSafeListed }
+            }, () => {
+              refetch(); // Refresh UI to show updated star
+            });
+          }}
+        />
+      )}
+
+      {/* Progress Modal */}
+      {progress && (
+        <UnsubscribeProgressModal
+          isOpen={true}
+          processed={progress.processed}
+          total={progress.total}
+          currentChannelId={progress.currentChannelId}
+          isComplete={progress.complete}
+          lastResult={progress.lastResult}
+          onClose={() => {
+            setProgress(null);
+            refetch(); // Refresh list after close
           }}
         />
       )}

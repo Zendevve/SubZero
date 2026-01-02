@@ -32,11 +32,11 @@ Before ANY task, evaluate the user's message for new rules. If detected, update 
 
 ### Commands
 
-- **build**: `pnpm build`
-- **dev**: `pnpm dev`
-- **test**: `pnpm test`
-- **format**: `pnpm format`
-- **lint**: `pnpm lint`
+- **build**: `npm run build`
+- **dev**: `npm run dev`
+- **test**: `npm run test`
+- **format**: `npm run format`
+- **lint**: `npm run lint`
 
 ### Tech Stack
 
@@ -48,14 +48,14 @@ Before ANY task, evaluate the user's message for new rules. If detected, update 
 | State/Async    | TanStack Query (React Query)                 |
 | Storage        | Dexie.js (IndexedDB wrapper)                 |
 | Styling        | Tailwind CSS (scoped via Shadow DOM)         |
-| Virtualization | `@tanstack/react-virtual` or `react-window`  |
+| Virtualization | `@tanstack/react-virtual`                    |
 
 ### Task Delivery (MCAF Cycle)
 
 1.  **Describe**: Ensure `docs/Features/` and `docs/ADR/` cover the work.
 2.  **Plan**: Propose files to change, tests to add.
 3.  **Implement**: Write tests (red) → Write code (green).
-4.  **Verify**: Run `pnpm test` and `pnpm lint`.
+4.  **Verify**: Run `npm test` and `npm run lint`.
 5.  **Review**: Update docs/AGENTS.md if a new pattern is learned.
 
 ### Coding Rules

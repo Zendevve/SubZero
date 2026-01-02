@@ -1,10 +1,12 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useRef, useState, useCallback } from 'react';
+import { Star, StarOff } from 'lucide-react';
 import type { Subscription, ActivityStatus } from '@/types';
 
 interface SubscriptionGridProps {
   subscriptions: Subscription[];
   onUnsubscribe?: (channelIds: string[]) => void;
+  onToggleSafelist?: (channelId: string, isSafeListed: boolean) => void;
 }
 
 const STATUS_COLORS: Record<ActivityStatus, string> = {
@@ -15,7 +17,11 @@ const STATUS_COLORS: Record<ActivityStatus, string> = {
   'no-videos': 'bg-slate-700 text-slate-400',
 };
 
-export default function SubscriptionGrid({ subscriptions, onUnsubscribe }: SubscriptionGridProps) {
+export default function SubscriptionGrid({
+  subscriptions,
+  onUnsubscribe,
+  onToggleSafelist,
+}: SubscriptionGridProps) {
   const [filter, setFilter] = useState<ActivityStatus | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -42,7 +48,10 @@ export default function SubscriptionGrid({ subscriptions, onUnsubscribe }: Subsc
     return new Date(timestamp).toLocaleDateString();
   };
 
-  const toggleSelect = useCallback((id: string) => {
+  const toggleSelect = useCallback((id: string, isSafeListed: boolean) => {
+    // Prevent selecting safelisted channels
+    if (isSafeListed) return;
+
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {
@@ -149,15 +158,16 @@ export default function SubscriptionGrid({ subscriptions, onUnsubscribe }: Subsc
                 }}
                 className={`flex items-center gap-4 px-4 py-2 border-b border-slate-700 hover:bg-slate-800/50 cursor-pointer ${isSelected ? 'bg-subzero-900/30' : ''
                   }`}
-                onClick={() => toggleSelect(sub.id)}
+                onClick={() => toggleSelect(sub.id, sub.isSafeListed)}
               >
                 {/* Checkbox */}
                 <input
                   type="checkbox"
                   checked={isSelected}
-                  onChange={() => toggleSelect(sub.id)}
+                  disabled={sub.isSafeListed}
+                  onChange={() => toggleSelect(sub.id, sub.isSafeListed)}
                   onClick={(e) => e.stopPropagation()}
-                  className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-subzero-500 focus:ring-subzero-500"
+                  className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-subzero-500 focus:ring-subzero-500 disabled:opacity-50 disabled:cursor-not-allowed"
                 />
 
                 {/* Avatar */}
@@ -174,15 +184,20 @@ export default function SubscriptionGrid({ subscriptions, onUnsubscribe }: Subsc
                   <p className="text-sm text-slate-400 truncate">{sub.handle}</p>
                 </div>
 
-                {/* Safe-listed Badge */}
-                {sub.isSafeListed && (
-                  <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs font-semibold">
-                    ⭐ SAFE
-                  </span>
-                )}
+                {/* Safe-list Toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleSafelist?.(sub.id, !sub.isSafeListed);
+                  }}
+                  title={sub.isSafeListed ? "Remove from Safelist" : "Add to Safelist"}
+                  className={`p-2 rounded-full hover:bg-slate-700 transition-colors ${sub.isSafeListed ? 'text-yellow-400' : 'text-slate-500'}`}
+                >
+                  {sub.isSafeListed ? <Star className="w-5 h-5 fill-current" /> : <StarOff className="w-5 h-5" />}
+                </button>
 
                 {/* Last Upload */}
-                <div className="text-right">
+                <div className="text-right w-32">
                   <p className="text-sm text-slate-400">Last Upload</p>
                   <p className="text-white">{formatDate(sub.lastUpload)}</p>
                 </div>

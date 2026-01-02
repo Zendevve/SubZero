@@ -23,7 +23,23 @@ export const db = new SubZeroDatabase();
  * Upsert a list of subscriptions (insert or update).
  */
 export async function upsertSubscriptions(subs: Subscription[]): Promise<void> {
-  await db.subscriptions.bulkPut(subs);
+  await db.transaction('rw', db.subscriptions, async () => {
+    const existing = await db.subscriptions.bulkGet(subs.map((s) => s.id));
+    const merged = subs.map((sub, i) => {
+      const old = existing[i];
+      if (!old) return sub;
+      return {
+        ...sub,
+        // Critical: Preserve user preferences and expensive fetch data
+        isSafeListed: old.isSafeListed,
+        lastUpload: sub.lastUpload ?? old.lastUpload,
+        activityStatus:
+          sub.activityStatus === 'unknown' ? old.activityStatus : sub.activityStatus,
+        fetchedAt: sub.fetchedAt ?? old.fetchedAt,
+      };
+    });
+    await db.subscriptions.bulkPut(merged);
+  });
 }
 
 /**

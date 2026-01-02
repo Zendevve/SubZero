@@ -39,7 +39,9 @@ export type MessageType =
   | 'UNSUBSCRIBE_BATCH'
   | 'GET_ALL_SUBSCRIPTIONS'
   | 'SCAN_INACTIVITY'
-  | 'OPEN_DASHBOARD';
+  | 'OPEN_DASHBOARD'
+  | 'UNSUBSCRIBE_PROGRESS'
+  | 'TOGGLE_SAFELIST';
 
 export interface ExtensionMessage<T = unknown> {
   type: MessageType;
@@ -62,4 +64,32 @@ export interface RssResultPayload {
   lastUpload: number | null;
   activityStatus: ActivityStatus;
   error?: string;
+}
+/**
+ * Payload for UNSUBSCRIBE_PROGRESS message
+ */
+export interface UnsubscribeProgressPayload {
+  processed: number;
+  total: number;
+  currentChannelId: string;
+  lastResult?: {
+    success: boolean;
+    error?: string;
+  };
+  complete: boolean;
+}
+
+/**
+ * Payload for UNSUBSCRIBE_BATCH message
+ */
+export interface UnsubscribeBatchPayload {
+  channelIds: string[];
+}
+
+/**
+ * Payload for TOGGLE_SAFELIST message
+ */
+export interface ToggleSafelistPayload {
+  channelId: string;
+  isSafeListed: boolean;
 }
