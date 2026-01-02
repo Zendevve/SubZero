@@ -4,7 +4,7 @@ import { ONE_YEAR_MS, SIX_MONTHS_MS } from '@/constants';
 
 // Mock global fetch
 const fetchMock = vi.fn();
-global.fetch = fetchMock;
+globalThis.fetch = fetchMock;
 
 describe('rss-parser', () => {
   beforeEach(() => {

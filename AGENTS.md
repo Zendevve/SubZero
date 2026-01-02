@@ -99,3 +99,30 @@ Before ANY task, evaluate the user's message for new rules. If detected, update 
 ### Dislikes
 - "Hacky" scripts.
 - Unnecessary complexity (e.g., PocketTube).
+
+---
+
+## Lessons Learned
+
+### Main World Injection (2026-01-03)
+**Problem**: Loading `injected.ts` as `script.src` doesn't work because CRXJS copies the raw `.ts` file to `dist/` without compiling it. Browsers can't execute TypeScript.
+
+**Solution**: Embed extraction logic as an inline `<script>` with `script.textContent = '...'`. This ensures the code runs in the main world without requiring a separate compiled file.
+
+### Data Persistence (2026-01-03)
+**Problem**: `upsertSubscriptions` was overwriting `isSafeListed` and RSS data every time subscriptions were re-extracted from YouTube.
+
+**Solution**: Use Dexie transactions to read-modify-write, preserving user preferences (`isSafeListed`) and expensive fetch data (`lastUpload`, `activityStatus`).
+
+---
+
+## Feature Status
+
+| Feature                | Status   | Notes                              |
+| ---------------------- | -------- | ---------------------------------- |
+| ytInitialData Extract  | ✅ Done  | Inline injection pattern           |
+| RSS Inactivity Scan    | ✅ Done  | Leaky Bucket rate limiter          |
+| Progress Indicator     | ✅ Done  | Real-time modal with blur/block    |
+| Safelist               | ✅ Done  | Persistent star, excludes from bulk|
+| Unit Tests             | ✅ Done  | 14/14 passing                      |
+| Manual Verification    | 🔄 WIP   | User testing required              |

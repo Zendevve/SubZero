@@ -10,10 +10,83 @@ console.log('[SubZero] Content script loaded.');
 // Inject a script into the Main World to access window.ytInitialData
 function injectMainWorldScript() {
   const script = document.createElement('script');
-  script.src = chrome.runtime.getURL('src/content/injected.ts');
-  script.type = 'module';
+  script.textContent = `
+    (function() {
+      function extractSubscriptions() {
+        const ytInitialData = window.ytInitialData;
+        if (!ytInitialData) {
+          console.warn('[SubZero] ytInitialData not found.');
+          return;
+        }
+
+        const subscriptions = [];
+
+        try {
+          const tabs = ytInitialData.contents?.twoColumnBrowseResultsRenderer?.tabs;
+          if (!tabs) throw new Error('No tabs found');
+
+          for (const tab of tabs) {
+            const sections = tab.tabRenderer?.content?.sectionListRenderer?.contents;
+            if (!sections) continue;
+
+            for (const section of sections) {
+              // Handle grid layout
+              const gridItems = section.itemSectionRenderer?.contents?.[0]?.gridRenderer?.items;
+              if (gridItems) {
+                for (const item of gridItems) {
+                  const channel = item.gridChannelRenderer;
+                  if (channel?.channelId) {
+                    subscriptions.push({
+                      id: channel.channelId,
+                      title: channel.title?.simpleText || 'Unknown',
+                      handle: channel.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl?.replace('/', '') || '',
+                      avatarUrl: channel.thumbnail?.thumbnails?.[0]?.url || '',
+                    });
+                  }
+                }
+              }
+
+              // Handle shelf/list layout
+              const shelfItems = section.itemSectionRenderer?.contents?.[0]?.shelfRenderer?.content?.expandedShelfContentsRenderer?.items;
+              if (shelfItems) {
+                for (const item of shelfItems) {
+                  const channel = item.channelRenderer;
+                  if (channel?.channelId) {
+                    subscriptions.push({
+                      id: channel.channelId,
+                      title: channel.title?.simpleText || 'Unknown',
+                      handle: channel.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl?.replace('/', '') || '',
+                      avatarUrl: channel.thumbnail?.thumbnails?.[0]?.url || '',
+                    });
+                  }
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('[SubZero] Error extracting subscriptions:', e);
+        }
+
+        console.log('[SubZero] Extracted ' + subscriptions.length + ' subscriptions.');
+
+        window.postMessage({
+          type: 'SUBZERO_YT_INITIAL_DATA',
+          payload: {
+            subscriptions,
+            continuationToken: null,
+          },
+        }, '*');
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', extractSubscriptions);
+      } else {
+        extractSubscriptions();
+      }
+    })();
+  `;
   (document.head || document.documentElement).appendChild(script);
-  script.onload = () => script.remove();
+  script.remove();
 }
 
 // Listen for messages from the injected script (via window.postMessage)
