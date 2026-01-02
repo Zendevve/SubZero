@@ -1,9 +1,10 @@
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useRef, useState } from 'react';
+import { useRef, useState, useCallback } from 'react';
 import type { Subscription, ActivityStatus } from '@/types';
 
 interface SubscriptionGridProps {
   subscriptions: Subscription[];
+  onUnsubscribe?: (channelIds: string[]) => void;
 }
 
 const STATUS_COLORS: Record<ActivityStatus, string> = {
@@ -14,9 +15,10 @@ const STATUS_COLORS: Record<ActivityStatus, string> = {
   'no-videos': 'bg-slate-700 text-slate-400',
 };
 
-export default function SubscriptionGrid({ subscriptions }: SubscriptionGridProps) {
+export default function SubscriptionGrid({ subscriptions, onUnsubscribe }: SubscriptionGridProps) {
   const [filter, setFilter] = useState<ActivityStatus | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const filteredSubs = subscriptions.filter((sub) => {
     const matchesFilter = filter === 'all' || sub.activityStatus === filter;
@@ -40,8 +42,63 @@ export default function SubscriptionGrid({ subscriptions }: SubscriptionGridProp
     return new Date(timestamp).toLocaleDateString();
   };
 
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAll = useCallback(() => {
+    // Select all visible (filtered) channels that are not safe-listed
+    const ids = filteredSubs.filter((s) => !s.isSafeListed).map((s) => s.id);
+    setSelectedIds(new Set(ids));
+  }, [filteredSubs]);
+
+  const selectNone = useCallback(() => {
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleUnsubscribe = () => {
+    if (selectedIds.size === 0) return;
+    onUnsubscribe?.(Array.from(selectedIds));
+  };
+
   return (
     <div>
+      {/* Selection Bar */}
+      <div className="flex items-center justify-between mb-4 p-4 bg-slate-800 rounded-lg">
+        <div className="flex items-center gap-4">
+          <span className="text-white font-semibold">
+            {selectedIds.size} selected
+          </span>
+          <button
+            onClick={selectAll}
+            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded"
+          >
+            Select All Visible
+          </button>
+          <button
+            onClick={selectNone}
+            className="px-3 py-1 text-sm bg-slate-700 hover:bg-slate-600 text-white rounded"
+          >
+            Clear
+          </button>
+        </div>
+        <button
+          onClick={handleUnsubscribe}
+          disabled={selectedIds.size === 0}
+          className="px-6 py-2 bg-red-600 hover:bg-red-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-colors"
+        >
+          🗑️ Unsubscribe ({selectedIds.size})
+        </button>
+      </div>
+
       {/* Filters */}
       <div className="flex gap-4 mb-4">
         <input
@@ -78,6 +135,7 @@ export default function SubscriptionGrid({ subscriptions }: SubscriptionGridProp
         >
           {virtualizer.getVirtualItems().map((virtualItem) => {
             const sub = filteredSubs[virtualItem.index];
+            const isSelected = selectedIds.has(sub.id);
             return (
               <div
                 key={sub.id}
@@ -89,8 +147,19 @@ export default function SubscriptionGrid({ subscriptions }: SubscriptionGridProp
                   height: `${virtualItem.size}px`,
                   transform: `translateY(${virtualItem.start}px)`,
                 }}
-                className="flex items-center gap-4 px-4 py-2 border-b border-slate-700 hover:bg-slate-800/50"
+                className={`flex items-center gap-4 px-4 py-2 border-b border-slate-700 hover:bg-slate-800/50 cursor-pointer ${isSelected ? 'bg-subzero-900/30' : ''
+                  }`}
+                onClick={() => toggleSelect(sub.id)}
               >
+                {/* Checkbox */}
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(sub.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-subzero-500 focus:ring-subzero-500"
+                />
+
                 {/* Avatar */}
                 <img
                   src={sub.avatarUrl}
@@ -104,6 +173,13 @@ export default function SubscriptionGrid({ subscriptions }: SubscriptionGridProp
                   <p className="font-semibold text-white truncate">{sub.title}</p>
                   <p className="text-sm text-slate-400 truncate">{sub.handle}</p>
                 </div>
+
+                {/* Safe-listed Badge */}
+                {sub.isSafeListed && (
+                  <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs font-semibold">
+                    ⭐ SAFE
+                  </span>
+                )}
 
                 {/* Last Upload */}
                 <div className="text-right">

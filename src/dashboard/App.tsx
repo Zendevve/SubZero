@@ -80,7 +80,19 @@ function App() {
       {/* Main Content */}
       {isLoading && <p className="text-slate-400">Loading subscriptions...</p>}
       {error && <p className="text-red-500">Error: {(error as Error).message}</p>}
-      {subscriptions && <SubscriptionGrid subscriptions={subscriptions} />}
+      {subscriptions && (
+        <SubscriptionGrid
+          subscriptions={subscriptions}
+          onUnsubscribe={(channelIds: string[]) => {
+            const count = channelIds.length;
+            if (confirm(`Are you sure you want to unsubscribe from ${count} channel(s)? This cannot be undone.`)) {
+              chrome.runtime.sendMessage({ type: 'UNSUBSCRIBE_BATCH', payload: { channelIds } });
+              // TODO: Show progress modal
+              alert(`Started unsubscribing from ${count} channels. This will take approximately ${Math.ceil(count * 2.5 / 60)} minutes.`);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
