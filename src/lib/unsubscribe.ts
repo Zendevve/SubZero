@@ -1,17 +1,61 @@
 /**
- * SubZero Unsubscribe Engine
+ * SubZero Unsubscribe Engine (REWRITTEN)
  *
- * Handles the DOM automation for unsubscribing from channels.
- * Uses MutationObserver to detect confirmation modals and
- * randomized delays (jitter) for anti-detection.
+ * Based on reference repos pattern:
+ * 1. Find ytd-channel-renderer elements on /feed/channels page
+ * 2. Click the unsubscribe button within each
+ * 3. Click confirm in the modal
+ * 4. Repeat with delays
  */
 
-import {
-  DEFAULT_UNSUBSCRIBE_DELAY_MS,
-  UNSUBSCRIBE_JITTER_MS,
-  MODAL_WAIT_TIMEOUT_MS,
-  SELECTORS,
-} from '@/constants';
+// Selectors from reference repos
+const UNSUBSCRIBE_SELECTORS = [
+  '[aria-label^="Unsubscribe from"]',
+  '#subscribe-button button[aria-label*="Unsubscribe"]',
+  'ytd-subscribe-button-renderer button[aria-label*="Unsubscribe"]',
+];
+
+const CONFIRM_SELECTORS = [
+  'yt-confirm-dialog-renderer #confirm-button button',
+  '#confirm-button button',
+  'yt-confirm-dialog-renderer button.yt-button-renderer',
+  'paper-dialog #confirm-button button',
+];
+
+/**
+ * Sleep helper function.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Find the unsubscribe button within a channel element.
+ */
+function findUnsubscribeButton(channelEl: Element): HTMLElement | null {
+  for (const selector of UNSUBSCRIBE_SELECTORS) {
+    const btn = channelEl.querySelector(selector) as HTMLElement | null;
+    if (btn) return btn;
+  }
+  return null;
+}
+
+/**
+ * Find and click the confirm button in the modal.
+ */
+async function clickConfirmButton(): Promise<boolean> {
+  for (let attempt = 0; attempt < 10; attempt++) {
+    for (const selector of CONFIRM_SELECTORS) {
+      const btn = document.querySelector(selector) as HTMLElement | null;
+      if (btn && btn.offsetParent !== null) {
+        btn.click();
+        return true;
+      }
+    }
+    await sleep(200);
+  }
+  return false;
+}
 
 export interface UnsubscribeResult {
   channelId: string;
@@ -19,254 +63,109 @@ export interface UnsubscribeResult {
   error?: string;
 }
 
-/**
- * Generates a random delay using Box-Muller transform for normal distribution.
- * This creates more "human-like" timing than uniform random.
- */
-function getRandomDelay(mean: number, stdDev: number): number {
-  // Box-Muller transform for normal distribution
-  const u1 = Math.random();
-  const u2 = Math.random();
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  const delay = mean + z * stdDev;
-  // Clamp to positive values
-  return Math.max(500, delay);
+export interface UnsubscribeQueueOptions {
+  onProgress?: (completed: number, total: number, current: string) => void;
+  onComplete?: (results: UnsubscribeResult[]) => void;
 }
 
 /**
- * Waits for an element to appear in the DOM using MutationObserver.
+ * Process unsubscribe for a list of channel IDs.
+ * Must be run on the /feed/channels page with all channels loaded.
  */
-function waitForElement(
-  selector: string,
-  timeout: number = MODAL_WAIT_TIMEOUT_MS
-): Promise<Element | null> {
-  return new Promise((resolve) => {
-    // Check if element already exists
-    const existing = document.querySelector(selector);
-    if (existing) {
-      resolve(existing);
-      return;
+export async function processUnsubscribe(
+  channelIds: string[],
+  options?: UnsubscribeQueueOptions
+): Promise<UnsubscribeResult[]> {
+  const results: UnsubscribeResult[] = [];
+  const total = channelIds.length;
+  let completed = 0;
+
+  // Get all channel elements
+  const channelElements = document.querySelectorAll('ytd-channel-renderer');
+  console.log(`[SubZero] Found ${channelElements.length} channel elements on page`);
+
+  // Build a map of channel ID -> element
+  const channelMap = new Map<string, Element>();
+  channelElements.forEach((el) => {
+    const link = el.querySelector('a#main-link') as HTMLAnchorElement | null;
+    const href = link?.href || '';
+    const id = href.split('/channel/')[1]?.split('?')[0] ||
+      href.split('/@')[1]?.split(/[/?]/)[0] || '';
+    if (id) {
+      channelMap.set(id, el);
+    }
+  });
+
+  console.log(`[SubZero] Mapped ${channelMap.size} channels`);
+
+  for (const channelId of channelIds) {
+    options?.onProgress?.(completed, total, channelId);
+
+    const channelEl = channelMap.get(channelId);
+    if (!channelEl) {
+      console.warn(`[SubZero] Channel ${channelId} not found on page`);
+      results.push({ channelId, success: false, error: 'Not found on page' });
+      completed++;
+      continue;
     }
 
-    const observer = new MutationObserver((_mutations, obs) => {
-      const element = document.querySelector(selector);
-      if (element) {
-        obs.disconnect();
-        resolve(element);
-      }
-    });
+    // Scroll element into view
+    channelEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    await sleep(500);
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    // Find and click unsubscribe button
+    const unsubBtn = findUnsubscribeButton(channelEl);
+    if (!unsubBtn) {
+      console.warn(`[SubZero] Unsubscribe button not found for ${channelId}`);
+      results.push({ channelId, success: false, error: 'Button not found' });
+      completed++;
+      continue;
+    }
 
-    // Timeout fallback
-    setTimeout(() => {
-      observer.disconnect();
-      resolve(null);
-    }, timeout);
-  });
-}
+    console.log(`[SubZero] Clicking unsubscribe for ${channelId}`);
+    unsubBtn.click();
+    await sleep(1000);
 
-/**
- * Simulates a mouse click event that appears more "trusted".
- * Uses MouseEvent with proper event properties.
- */
-function simulateClick(element: Element): void {
-  const rect = element.getBoundingClientRect();
-  const centerX = rect.left + rect.width / 2;
-  const centerY = rect.top + rect.height / 2;
+    // Click confirm button
+    const confirmed = await clickConfirmButton();
+    if (!confirmed) {
+      console.warn(`[SubZero] Confirm button not found for ${channelId}`);
+      results.push({ channelId, success: false, error: 'Confirm failed' });
+      completed++;
+      continue;
+    }
 
-  const mouseDownEvent = new MouseEvent('mousedown', {
-    bubbles: true,
-    cancelable: true,
-    view: window,
-    clientX: centerX,
-    clientY: centerY,
-  });
+    console.log(`[SubZero] Successfully unsubscribed from ${channelId}`);
+    results.push({ channelId, success: true });
+    completed++;
+    options?.onProgress?.(completed, total, channelId);
 
-  const mouseUpEvent = new MouseEvent('mouseup', {
-    bubbles: true,
-    cancelable: true,
-    view: window,
-    clientX: centerX,
-    clientY: centerY,
-  });
-
-  const clickEvent = new MouseEvent('click', {
-    bubbles: true,
-    cancelable: true,
-    view: window,
-    clientX: centerX,
-    clientY: centerY,
-  });
-
-  element.dispatchEvent(mouseDownEvent);
-  element.dispatchEvent(mouseUpEvent);
-  element.dispatchEvent(clickEvent);
-}
-
-/**
- * Finds the "Subscribed" button for a specific channel.
- * This is called from the channel page or list context.
- */
-function findSubscribedButton(): Element | null {
-  const buttons = document.querySelectorAll(SELECTORS.SUBSCRIBED_BUTTON);
-
-  for (const button of buttons) {
-    // Look for button that indicates "subscribed" state
-    const text = button.textContent?.toLowerCase() || '';
-    const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
-
-    if (
-      text.includes('subscribed') ||
-      ariaLabel.includes('subscribed') ||
-      button.querySelector('[subscribed]')
-    ) {
-      return button;
+    // Delay between actions (2 seconds like reference repos)
+    if (completed < total) {
+      await sleep(2000);
     }
   }
 
-  return null;
+  options?.onComplete?.(results);
+  return results;
 }
 
 /**
- * Executes unsubscribe action for the current channel page.
- * Returns a promise that resolves when the action is complete.
- */
-export async function executeUnsubscribe(channelId: string): Promise<UnsubscribeResult> {
-  try {
-    // Step 1: Find and click the "Subscribed" button
-    const subscribedButton = findSubscribedButton();
-    if (!subscribedButton) {
-      return { channelId, success: false, error: 'Subscribed button not found' };
-    }
-
-    simulateClick(subscribedButton);
-
-    // Step 2: Wait for confirmation modal to appear
-    const confirmButton = await waitForElement(SELECTORS.UNSUBSCRIBE_CONFIRM_BUTTON);
-    if (!confirmButton) {
-      return { channelId, success: false, error: 'Confirmation modal did not appear' };
-    }
-
-    // Small delay before clicking confirm (more human-like)
-    await new Promise((r) => setTimeout(r, 300 + Math.random() * 200));
-
-    // Step 3: Click the confirm button
-    simulateClick(confirmButton);
-
-    // Step 4: Wait for toast/success indicator
-    await new Promise((r) => setTimeout(r, 500));
-
-    return { channelId, success: true };
-  } catch (error) {
-    return {
-      channelId,
-      success: false,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-/**
- * Unsubscribe Queue Manager
- * Handles batch unsubscription with rate limiting and jitter.
+ * Queue wrapper for backward compatibility.
  */
 export class UnsubscribeQueue {
-  private queue: string[] = [];
-  private isProcessing = false;
-  private isPaused = false;
-  private onProgress?: (completed: number, total: number, current: string) => void;
-  private onComplete?: (results: UnsubscribeResult[]) => void;
-  private results: UnsubscribeResult[] = [];
+  private channelIds: string[] = [];
+  private options: UnsubscribeQueueOptions;
 
-  constructor(options?: {
-    onProgress?: (completed: number, total: number, current: string) => void;
-    onComplete?: (results: UnsubscribeResult[]) => void;
-  }) {
-    this.onProgress = options?.onProgress;
-    this.onComplete = options?.onComplete;
+  constructor(options?: UnsubscribeQueueOptions) {
+    this.options = options || {};
   }
 
-  /**
-   * Add channel IDs to the queue.
-   */
   add(channelIds: string[]): void {
-    this.queue.push(...channelIds);
+    this.channelIds.push(...channelIds);
   }
 
-  /**
-   * Start processing the queue.
-   */
   async start(): Promise<void> {
-    if (this.isProcessing) return;
-    this.isProcessing = true;
-    this.results = [];
-
-    const total = this.queue.length;
-    let completed = 0;
-
-    while (this.queue.length > 0) {
-      if (this.isPaused) {
-        await new Promise((r) => setTimeout(r, 500));
-        continue;
-      }
-
-      const channelId = this.queue.shift()!;
-      this.onProgress?.(completed, total, channelId);
-
-      // Navigate to channel page and execute unsubscribe
-      // In a real implementation, this would need to navigate or use the current page context
-      const result = await executeUnsubscribe(channelId);
-      this.results.push(result);
-
-      completed++;
-      this.onProgress?.(completed, total, channelId);
-
-      // Random delay between actions
-      if (this.queue.length > 0) {
-        const delay = getRandomDelay(DEFAULT_UNSUBSCRIBE_DELAY_MS, UNSUBSCRIBE_JITTER_MS);
-        await new Promise((r) => setTimeout(r, delay));
-      }
-    }
-
-    this.isProcessing = false;
-    this.onComplete?.(this.results);
-  }
-
-  /**
-   * Pause the queue.
-   */
-  pause(): void {
-    this.isPaused = true;
-  }
-
-  /**
-   * Resume the queue.
-   */
-  resume(): void {
-    this.isPaused = false;
-  }
-
-  /**
-   * Cancel and clear the queue.
-   */
-  cancel(): void {
-    this.queue = [];
-    this.isProcessing = false;
-    this.isPaused = false;
-  }
-
-  /**
-   * Get queue status.
-   */
-  getStatus(): { remaining: number; isProcessing: boolean; isPaused: boolean } {
-    return {
-      remaining: this.queue.length,
-      isProcessing: this.isProcessing,
-      isPaused: this.isPaused,
-    };
+    await processUnsubscribe(this.channelIds, this.options);
   }
 }
