@@ -2,107 +2,90 @@
  * SubZero Content Script
  *
  * Injected into YouTube's /feed/channels page.
- * Extracts ytInitialData and communicates with the service worker.
+ * Extracts subscription data via DOM scraping and communicates with the service worker.
  */
 
 console.log('[SubZero] Content script loaded.');
 
-// Inject a script into the Main World to access window.ytInitialData
-function injectMainWorldScript() {
-  const script = document.createElement('script');
-  script.textContent = `
-    (function() {
-      function extractSubscriptions() {
-        const ytInitialData = window.ytInitialData;
-        if (!ytInitialData) {
-          console.warn('[SubZero] ytInitialData not found.');
-          return;
-        }
+/**
+ * Extract subscription data from the rendered DOM.
+ * Uses ytd-channel-renderer elements which contain channel info.
+ */
+function extractSubscriptionsFromDOM() {
+  const channelElements = document.querySelectorAll('ytd-channel-renderer');
 
-        const subscriptions = [];
+  console.log(`[SubZero] Found ${channelElements.length} channel elements in DOM.`);
 
-        try {
-          const tabs = ytInitialData.contents?.twoColumnBrowseResultsRenderer?.tabs;
-          if (!tabs) throw new Error('No tabs found');
+  if (channelElements.length === 0) {
+    console.warn('[SubZero] No channels found. Page may still be loading.');
+    return [];
+  }
 
-          for (const tab of tabs) {
-            const sections = tab.tabRenderer?.content?.sectionListRenderer?.contents;
-            if (!sections) continue;
+  const subscriptions: Array<{
+    id: string;
+    title: string;
+    handle: string;
+    avatarUrl: string;
+  }> = [];
 
-            for (const section of sections) {
-              // Handle grid layout
-              const gridItems = section.itemSectionRenderer?.contents?.[0]?.gridRenderer?.items;
-              if (gridItems) {
-                for (const item of gridItems) {
-                  const channel = item.gridChannelRenderer;
-                  if (channel?.channelId) {
-                    subscriptions.push({
-                      id: channel.channelId,
-                      title: channel.title?.simpleText || 'Unknown',
-                      handle: channel.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl?.replace('/', '') || '',
-                      avatarUrl: channel.thumbnail?.thumbnails?.[0]?.url || '',
-                    });
-                  }
-                }
-              }
+  channelElements.forEach((el) => {
+    try {
+      // Channel ID from the link
+      const link = el.querySelector('a#main-link') as HTMLAnchorElement | null;
+      const href = link?.href || '';
+      const channelId = href.split('/channel/')[1]?.split('?')[0] ||
+        href.split('/@')[1]?.split('?')[0] || '';
 
-              // Handle shelf/list layout
-              const shelfItems = section.itemSectionRenderer?.contents?.[0]?.shelfRenderer?.content?.expandedShelfContentsRenderer?.items;
-              if (shelfItems) {
-                for (const item of shelfItems) {
-                  const channel = item.channelRenderer;
-                  if (channel?.channelId) {
-                    subscriptions.push({
-                      id: channel.channelId,
-                      title: channel.title?.simpleText || 'Unknown',
-                      handle: channel.navigationEndpoint?.browseEndpoint?.canonicalBaseUrl?.replace('/', '') || '',
-                      avatarUrl: channel.thumbnail?.thumbnails?.[0]?.url || '',
-                    });
-                  }
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error('[SubZero] Error extracting subscriptions:', e);
-        }
+      // Title
+      const titleEl = el.querySelector('#channel-title, yt-formatted-string#text') as HTMLElement | null;
+      const title = titleEl?.textContent?.trim() || 'Unknown';
 
-        console.log('[SubZero] Extracted ' + subscriptions.length + ' subscriptions.');
-
-        window.postMessage({
-          type: 'SUBZERO_YT_INITIAL_DATA',
-          payload: {
-            subscriptions,
-            continuationToken: null,
-          },
-        }, '*');
+      // Handle (from URL or subscriber count area)
+      const handleEl = el.querySelector('#subscribers, #metadata yt-formatted-string') as HTMLElement | null;
+      let handle = '';
+      if (href.includes('/@')) {
+        handle = '@' + href.split('/@')[1]?.split(/[/?]/)[0];
       }
 
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', extractSubscriptions);
-      } else {
-        extractSubscriptions();
+      // Avatar
+      const avatarEl = el.querySelector('img#img, yt-img-shadow img') as HTMLImageElement | null;
+      const avatarUrl = avatarEl?.src || '';
+
+      if (channelId || title !== 'Unknown') {
+        subscriptions.push({
+          id: channelId || `unknown-${subscriptions.length}`,
+          title,
+          handle: handle || handleEl?.textContent?.trim() || '',
+          avatarUrl,
+        });
       }
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
-  script.remove();
+    } catch (e) {
+      console.error('[SubZero] Error parsing channel element:', e);
+    }
+  });
+
+  console.log(`[SubZero] Extracted ${subscriptions.length} subscriptions from DOM.`);
+  return subscriptions;
 }
 
-// Listen for messages from the injected script (via window.postMessage)
-window.addEventListener('message', (event) => {
-  // Only accept messages from the same frame
-  if (event.source !== window) return;
+/**
+ * Send extracted subscriptions to the service worker.
+ */
+function sendSubscriptionsToBackground() {
+  const subscriptions = extractSubscriptionsFromDOM();
 
-  if (event.data?.type === 'SUBZERO_YT_INITIAL_DATA') {
-    console.log('[SubZero] Received ytInitialData from injected script.');
-    // Forward to service worker
+  if (subscriptions.length > 0) {
     chrome.runtime.sendMessage({
       type: 'SUBSCRIPTIONS_EXTRACTED',
-      payload: event.data.payload,
+      payload: {
+        subscriptions,
+        continuationToken: null,
+      },
+    }, (response) => {
+      console.log('[SubZero] Sent subscriptions to background:', response);
     });
   }
-});
+}
 
 // Inject a floating "Launch SubZero" button
 function injectLaunchButton() {
@@ -136,7 +119,8 @@ function injectLaunchButton() {
     button.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
   };
   button.onclick = () => {
-    // Open the dashboard in a new tab
+    // Extract data first, then open dashboard
+    sendSubscriptionsToBackground();
     chrome.runtime.sendMessage({ type: 'OPEN_DASHBOARD' });
   };
 
@@ -200,5 +184,5 @@ async function handleUnsubscribeBatch(payload: UnsubscribeBatchPayload) {
 }
 
 // Initialize
-injectMainWorldScript();
 injectLaunchButton();
+

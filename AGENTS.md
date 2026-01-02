@@ -104,10 +104,10 @@ Before ANY task, evaluate the user's message for new rules. If detected, update 
 
 ## Lessons Learned
 
-### Main World Injection (2026-01-03)
-**Problem**: Loading `injected.ts` as `script.src` doesn't work because CRXJS copies the raw `.ts` file to `dist/` without compiling it. Browsers can't execute TypeScript.
+### Main World Injection (2026-01-03) - REVISED
+**Problem**: Loading `injected.ts` as `script.src` doesn't work because CRXJS copies the raw `.ts` file to `dist/` without compiling it. Browsers can't execute TypeScript. Additionally, `ytInitialData` is unreliable and may not contain all subscriptions.
 
-**Solution**: Embed extraction logic as an inline `<script>` with `script.textContent = '...'`. This ensures the code runs in the main world without requiring a separate compiled file.
+**Solution**: Use DOM scraping with `document.querySelectorAll('ytd-channel-renderer')` as reference repos do. This reads the rendered DOM directly, which is more reliable than parsing internal JSON. Trigger extraction on button click, not on page load.
 
 ### Data Persistence (2026-01-03)
 **Problem**: `upsertSubscriptions` was overwriting `isSafeListed` and RSS data every time subscriptions were re-extracted from YouTube.
