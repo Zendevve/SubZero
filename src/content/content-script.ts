@@ -87,6 +87,93 @@ function sendSubscriptionsToBackground() {
   }
 }
 
+/**
+ * Sleep helper function.
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Show a floating status indicator.
+ */
+function showStatus(message: string) {
+  let status = document.getElementById('subzero-status');
+  if (!status) {
+    status = document.createElement('div');
+    status.id = 'subzero-status';
+    status.style.cssText = `
+      position: fixed;
+      bottom: 80px;
+      right: 20px;
+      z-index: 9999;
+      padding: 12px 20px;
+      background: rgba(14, 165, 233, 0.95);
+      color: white;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    `;
+    document.body.appendChild(status);
+  }
+  status.textContent = message;
+  status.style.display = 'block';
+}
+
+/**
+ * Hide the status indicator.
+ */
+function hideStatus() {
+  const status = document.getElementById('subzero-status');
+  if (status) status.style.display = 'none';
+}
+
+/**
+ * Auto-scroll to load all subscriptions (from reference repos pattern).
+ */
+async function scrollToLoad(): Promise<void> {
+  console.log('[SubZero] Auto-scrolling to load all subscriptions...');
+  showStatus('🔄 Loading all subscriptions...');
+
+  let previousHeight = 0;
+  let noChangeCount = 0;
+
+  while (noChangeCount < 3) {
+    window.scrollTo(0, document.documentElement.scrollHeight);
+    await sleep(1500);
+
+    const currentHeight = document.documentElement.scrollHeight;
+    const channelCount = document.querySelectorAll('ytd-channel-renderer').length;
+    showStatus(`🔄 Loading... (${channelCount} channels found)`);
+
+    if (currentHeight === previousHeight) {
+      noChangeCount++;
+    } else {
+      noChangeCount = 0;
+    }
+    previousHeight = currentHeight;
+  }
+
+  window.scrollTo(0, 0);
+  await sleep(500);
+  console.log('[SubZero] Finished loading subscriptions.');
+}
+
+/**
+ * Main extraction flow: scroll, extract, send.
+ */
+async function extractAndSend() {
+  await scrollToLoad();
+  const count = document.querySelectorAll('ytd-channel-renderer').length;
+  showStatus(`✅ Found ${count} channels! Opening dashboard...`);
+  sendSubscriptionsToBackground();
+  await sleep(1000);
+  hideStatus();
+  chrome.runtime.sendMessage({ type: 'OPEN_DASHBOARD' });
+}
+
 // Inject a floating "Launch SubZero" button
 function injectLaunchButton() {
   if (document.getElementById('subzero-launch-button')) return;
@@ -119,9 +206,8 @@ function injectLaunchButton() {
     button.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
   };
   button.onclick = () => {
-    // Extract data first, then open dashboard
-    sendSubscriptionsToBackground();
-    chrome.runtime.sendMessage({ type: 'OPEN_DASHBOARD' });
+    // Auto-scroll, extract, then open dashboard
+    extractAndSend();
   };
 
   document.body.appendChild(button);
